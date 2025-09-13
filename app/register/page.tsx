@@ -8,7 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Lock, Mail, Eye, EyeOff } from 'lucide-react';
+import { Lock, Mail, Eye, EyeOff, Key } from 'lucide-react';
+import { startRegistration } from '@simplewebauthn/browser';
 
 export default function RegisterPage() {
   const [email, setEmail] = useState('');
@@ -46,6 +47,48 @@ export default function RegisterPage() {
       }
     } catch (error) {
       setError('An error occurred. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePasskeyRegister = async () => {
+    if (!email) {
+      setError('Please enter your email first');
+      return;
+    }
+    setLoading(true);
+    setError('');
+
+    try {
+      const optionsResp = await fetch('/api/auth/passkey/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      if (!optionsResp.ok) {
+        const data = await optionsResp.json();
+        setError(data?.error || 'Failed to get registration options');
+        return;
+      }
+  const options = await optionsResp.json();
+
+  // Let @simplewebauthn/browser handle conversion of base64url <-> ArrayBuffer
+  const regResp = await startRegistration(options);
+      const verificationResp = await fetch('/api/auth/passkey/register', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, response: regResp }),
+      });
+      if (verificationResp.ok) {
+        router.push('/dashboard');
+      } else {
+        const data = await verificationResp.json();
+        setError(data?.error || 'Passkey registration failed');
+      }
+    } catch (err) {
+      console.error('Passkey registration error', err);
+      setError('Passkey registration failed');
     } finally {
       setLoading(false);
     }
@@ -134,13 +177,24 @@ export default function RegisterPage() {
               )}
 
               <div className="flex items-center justify-between">
-                <Button
-                  type="submit"
-                  className="font-mono text-sm px-4 py-2"
-                  disabled={loading}
-                >
-                  {loading ? 'Creating Account...' : 'Create Account'}
-                </Button>
+                <div className="flex space-x-2">
+                  <Button
+                    type="submit"
+                    className="font-mono text-sm px-4 py-2"
+                    disabled={loading}
+                  >
+                    {loading ? 'Creating Account...' : 'Create Account'}
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handlePasskeyRegister}
+                    className="font-mono text-sm px-4 py-2 bg-green-600 hover:bg-green-700"
+                    disabled={loading}
+                  >
+                    <Key className="w-4 h-4 mr-1" />
+                    Passkey
+                  </Button>
+                </div>
 
                 <Link href="/login" className="text-sm text-gray-400 hover:text-gray-200">
                   Sign in

@@ -37,3 +37,5 @@ next-env.d.ts
 
 passwords.db
 browser-extension
+
+VERCEL_DEPLOY.md 

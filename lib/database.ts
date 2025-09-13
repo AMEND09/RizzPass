@@ -2,8 +2,11 @@ import Database from 'better-sqlite3';
 import bcrypt from 'bcryptjs';
 import path from 'path';
 
-const dbPath = path.join(process.cwd(), 'passwords.db');
+const dbPath = process.env.DATABASE_PATH ? path.resolve(process.env.DATABASE_PATH) : path.join(process.cwd(), 'passwords.db');
 const db = new Database(dbPath);
+
+// Export db
+export { db };
 
 // Initialize database tables (ensure fresh installs have correct schema)
 db.exec(`
@@ -13,6 +16,17 @@ db.exec(`
   password_hash TEXT NOT NULL,
   encryption_salt TEXT NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS passkeys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    credential_id TEXT UNIQUE NOT NULL,
+    public_key TEXT NOT NULL,
+    counter INTEGER DEFAULT 0,
+    transports TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS passwords (

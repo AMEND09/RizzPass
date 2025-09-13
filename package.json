@@ -1,7 +1,10 @@
 {
-  "name": "nextjs",
+  "name": "rizzpass",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "bin": {
+    "rizzpass": "./bin/rizzpass.js"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -39,6 +42,8 @@
     "@radix-ui/react-toggle": "^1.1.0",
     "@radix-ui/react-toggle-group": "^1.1.0",
     "@radix-ui/react-tooltip": "^1.1.2",
+    "@simplewebauthn/browser": "^13.1.2",
+    "@simplewebauthn/server": "^13.1.2",
     "@types/bcryptjs": "^3.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/jsonwebtoken": "^9.0.10",

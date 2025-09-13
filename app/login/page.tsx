@@ -7,8 +7,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Lock, Mail, Eye, EyeOff } from 'lucide-react';
+import { Lock, Mail, Eye, EyeOff, Key } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { startAuthentication } from '@simplewebauthn/browser';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -17,6 +18,8 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  // Feature flag to hide passkey button while in development
+  const SHOW_PASSKEY_BUTTON = false;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,6 +58,7 @@ export default function LoginPage() {
               exported = await exportKeyToBase64(key);
               // store key material in sessionStorage for this session only
               sessionStorage.setItem('rizzpass_key', exported);
+              sessionStorage.setItem('user_email', email);
             } catch (err) {
               console.error('[login] key derivation/export failed', err);
               const msg = err instanceof Error ? err.message : 'Failed to derive encryption key';
@@ -108,6 +112,62 @@ export default function LoginPage() {
     } catch (err) {
       console.error('[login] unexpected error', err);
       setError('An error occurred. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePasskeyLogin = async () => {
+    const email = prompt('Enter your email for passkey login');
+    if (!email) return;
+    setLoading(true);
+    setError('');
+
+    try {
+      const optionsResp = await fetch('/api/auth/passkey/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      if (!optionsResp.ok) {
+        const data = await optionsResp.json();
+        setError(data?.error || 'Failed to get passkey options');
+        return;
+      }
+      const options = await optionsResp.json().catch(() => null);
+
+      console.log('[passkey-client] server options:', options);
+      if (!options) {
+        setError('Passkey options malformed from server');
+        return;
+      }
+
+      // Prefer passing the options directly; wrap only if the library warns.
+      let authResp: any;
+      try {
+        authResp = await startAuthentication(options as any);
+      } catch (err) {
+        console.warn('[passkey-client] startAuthentication failed, retrying wrapped:', err);
+        // fallback to wrapped form the browser helper also accepts
+        authResp = await startAuthentication({ publicKey: options } as any);
+      }
+      const verificationResp = await fetch('/api/auth/passkey/login', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, response: authResp }),
+      });
+      if (verificationResp.ok) {
+        const data = await verificationResp.json();
+        // Store the token or something, but since using cookies, perhaps redirect
+        sessionStorage.setItem('user_email', email);
+        window.location.href = '/dashboard';
+      } else {
+        const data = await verificationResp.json();
+        setError(data?.error || 'Passkey verification failed');
+      }
+    } catch (err) {
+      console.error('Passkey login error', err);
+      setError('Passkey login failed');
     } finally {
       setLoading(false);
     }
@@ -184,13 +244,26 @@ export default function LoginPage() {
               )}
 
               <div className="flex items-center justify-between">
-                <Button
-                  type="submit"
-                  className="font-mono text-sm px-4 py-2"
-                  disabled={loading}
-                >
-                  {loading ? 'Signing in...' : 'Sign In'}
-                </Button>
+                <div className="flex space-x-2">
+                  <Button
+                    type="submit"
+                    className="font-mono text-sm px-4 py-2"
+                    disabled={loading}
+                  >
+                    {loading ? 'Signing in...' : 'Sign In'}
+                  </Button>
+                  {SHOW_PASSKEY_BUTTON && (
+                    <Button
+                      type="button"
+                      onClick={handlePasskeyLogin}
+                      className="font-mono text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700"
+                      disabled={loading}
+                    >
+                      <Key className="w-4 h-4 mr-1" />
+                      Passkey
+                    </Button>
+                  )}
+                </div>
 
                 <Link href="/register" className="text-sm text-gray-400 hover:text-gray-200">
                   Create account
