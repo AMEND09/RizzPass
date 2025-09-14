@@ -13,6 +13,7 @@ import { startRegistration } from '@simplewebauthn/browser';
 
 export default function RegisterPage() {
   const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -35,7 +36,7 @@ export default function RegisterPage() {
       const response = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, username, password }),
       });
 
       const data = await response.json();
@@ -119,6 +120,21 @@ export default function RegisterPage() {
 
           <div className="p-6">
             <form onSubmit={handleSubmit} className="space-y-4 font-mono text-gray-100">
+              <div>
+                <Label htmlFor="username" className="text-sm text-gray-300">username</Label>
+                <div className="relative mt-1">
+                  <Input
+                    id="username"
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="pl-3 pr-3 h-10"
+                    placeholder="your-username"
+                    required
+                  />
+                </div>
+              </div>
+
               <div>
                 <Label htmlFor="email" className="text-sm text-gray-300">email</Label>
                 <div className="relative mt-1">

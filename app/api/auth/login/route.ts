@@ -4,17 +4,17 @@ import { generateToken } from '@/lib/jwt';
 
 export async function POST(request: NextRequest) {
   try {
-  const { email, password } = await request.json();
+  const { identifier, password } = await request.json();
   // removed server-side debug log to avoid leaking sensitive information
     
-    if (!email || !password) {
+    if (!identifier || !password) {
       return NextResponse.json(
-        { error: 'Email and password are required' },
+        { error: 'Identifier (email or username) and password are required' },
         { status: 400 }
       );
     }
     
-    const user = await verifyUser(email, password);
+    const user = await verifyUser(identifier, password);
     
     if (!user) {
       return NextResponse.json(

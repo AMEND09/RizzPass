@@ -4,9 +4,10 @@
     {
       "src": "package.json",
       "use": "@vercel/static-build",
-      "config": { "distDir": ".next" }
+    "config": { "distDir": ".next" }
     }
   ],
+  "installCommand": "npm install --legacy-peer-deps",
   "routes": [
     { "src": "/(.*)", "dest": "/$1" }
   ],

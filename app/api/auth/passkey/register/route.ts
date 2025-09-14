@@ -13,11 +13,14 @@ declare global {
 
 export async function POST(request: NextRequest) {
   try {
-    const { email } = await request.json();
-    if (!email) return NextResponse.json({ error: 'Email required' }, { status: 400 });
+    const { identifier } = await request.json();
+    if (!identifier) return NextResponse.json({ error: 'Identifier (email or username) required' }, { status: 400 });
 
-    // Check if user exists
-    const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email) as { id: number } | undefined;
+    // Check if user exists (by email first, then username)
+    let user = db.prepare('SELECT id, email FROM users WHERE email = ?').get(identifier) as { id: number; email: string } | undefined;
+    if (!user) {
+      user = db.prepare('SELECT id, email FROM users WHERE username = ?').get(identifier) as { id: number; email: string } | undefined;
+    }
     if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     // Get existing passkeys
@@ -26,14 +29,14 @@ export async function POST(request: NextRequest) {
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
-      userID: new Uint8Array(Buffer.from(user.id.toString())),
-      userName: email,
-      userDisplayName: email,
+  userID: new Uint8Array(Buffer.from(user.id.toString())),
+  userName: user.email,
+  userDisplayName: user.email,
       attestationType: 'none',
       excludeCredentials: existingPasskeys.map(p => ({
         id: p.credential_id,
         type: 'public-key' as const,
-        transports: ['internal'] as const,
+        transports: ['internal'],
       })),
       authenticatorSelection: {
         residentKey: 'preferred',
@@ -43,10 +46,11 @@ export async function POST(request: NextRequest) {
 
     // Store challenge
     global.challenges = global.challenges || new Map();
-    global.challenges.set(email, options.challenge);
+  // store challenge keyed by user id (safer than by email)
+  global.challenges.set(String(user.id), options.challenge);
 
-    console.log('Generated registration options:', JSON.stringify(options, null, 2));
-    return NextResponse.json(options);
+  console.log('Generated registration options for user id', user.id);
+  return NextResponse.json(options);
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -55,13 +59,17 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const { email, response } = await request.json();
-    if (!email || !response) return NextResponse.json({ error: 'Email and response required' }, { status: 400 });
+    const { identifier, response } = await request.json();
+    if (!identifier || !response) return NextResponse.json({ error: 'Identifier and response required' }, { status: 400 });
 
-    const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email) as { id: number } | undefined;
+    // Find user by email or username
+    let user = db.prepare('SELECT id, email FROM users WHERE email = ?').get(identifier) as { id: number; email: string } | undefined;
+    if (!user) {
+      user = db.prepare('SELECT id, email FROM users WHERE username = ?').get(identifier) as { id: number; email: string } | undefined;
+    }
     if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
-    const expectedChallenge = global.challenges?.get(email);
+    const expectedChallenge = global.challenges?.get(String(user.id));
     if (!expectedChallenge) return NextResponse.json({ error: 'Challenge not found' }, { status: 400 });
 
     // Use the actual request origin header when available (helps dev on multiple ports)
@@ -95,15 +103,15 @@ export async function PUT(request: NextRequest) {
     db.prepare(`
       INSERT INTO passkeys (user_id, credential_id, public_key, counter, transports)
       VALUES (?, ?, ?, ?, ?)
-    `).run(user.id, storedCredentialId, storedPublicKey, typeof counter === 'number' ? counter : 0, JSON.stringify(response.response.transports || []));
+    `).run(user.id, storedCredentialId, storedPublicKey, typeof counter === 'number' ? counter : 0, JSON.stringify(response.response?.transports || []));
 
     // Generate JWT
     if (!process.env.JWT_SECRET) return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
-    const token = jwt.sign({ userId: user.id, email }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ userId: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
 
-    global.challenges?.delete(email);
+    global.challenges?.delete(String(user.id));
 
-    return NextResponse.json({ token, verified: true });
+    return NextResponse.json({ token, verified: true, user: { id: user.id, email: user.email } });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

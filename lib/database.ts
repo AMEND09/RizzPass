@@ -13,6 +13,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email TEXT UNIQUE NOT NULL,
+  username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   encryption_salt TEXT NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -81,9 +82,49 @@ try {
   console.error('Database migration check failed:', err);
 }
 
+// Runtime migration: if username column missing (older DB), add it and populate unique usernames
+try {
+  const row = db.prepare(`PRAGMA table_info(users)`).all();
+  const hasUsername = row.some((r: any) => r.name === 'username');
+  if (!hasUsername) {
+    // Add the column
+    db.exec(`ALTER TABLE users ADD COLUMN username TEXT`);
+
+    // Populate usernames derived from email local part and ensure uniqueness
+    const users = db.prepare(`SELECT id, email FROM users`).all() as { id: number; email: string }[];
+    const update = db.prepare(`UPDATE users SET username = ? WHERE id = ?`);
+    const exists = db.prepare(`SELECT id FROM users WHERE username = ?`);
+    for (const u of users) {
+      const local = (u.email || '').split('@')[0] || `user${u.id}`;
+      // normalize: lowercase and replace non-alphanum with '-'
+      let candidate = local.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      if (!candidate) candidate = `user${u.id}`;
+      let suffix = 1;
+      let uniqueCandidate = candidate;
+      while (true) {
+        const found = exists.get(uniqueCandidate) as { id: number } | undefined;
+        if (!found) break;
+        suffix += 1;
+        uniqueCandidate = `${candidate}-${suffix}`;
+      }
+      update.run(uniqueCandidate, u.id);
+    }
+
+    // Create a unique index on username to enforce uniqueness for future inserts
+    try {
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique ON users(username)`);
+    } catch (e) {
+      console.warn('Could not create unique index on username:', e);
+    }
+  }
+} catch (err) {
+  console.error('Username migration check failed:', err);
+}
+
 export interface User {
   id: number;
   email: string;
+  username: string;
   password_hash: string;
   encryption_salt: string;
   created_at: string;
@@ -112,12 +153,15 @@ export interface Category {
 
 export const userQueries = {
   create: db.prepare(`
-  INSERT INTO users (email, password_hash, encryption_salt)
-  VALUES (?, ?, ?)
+  INSERT INTO users (email, username, password_hash, encryption_salt)
+  VALUES (?, ?, ?, ?)
   `),
-  
   findByEmail: db.prepare(`
     SELECT * FROM users WHERE email = ?
+  `),
+  
+  findByUsername: db.prepare(`
+    SELECT * FROM users WHERE username = ?
   `),
   
   findById: db.prepare(`
@@ -175,20 +219,27 @@ export const categoryQueries = {
   `)
 };
 
-export async function createUser(email: string, password: string): Promise<User> {
+export async function createUser(email: string, password: string, username?: string): Promise<User> {
   const saltRounds = 12;
   const hashedPassword = await bcrypt.hash(password, saltRounds);
   
   // Generate a random encryption salt for client-side key derivation
   const encryptionSalt = require('crypto').randomBytes(16).toString('hex');
 
-  const result = userQueries.create.run(email, hashedPassword, encryptionSalt);
+  // Derive username from email local part if not provided (fallback)
+  const finalUsername = username && username.trim().length > 0 ? username.trim() : email.split('@')[0];
+
+  const result = userQueries.create.run(email, finalUsername, hashedPassword, encryptionSalt);
   const user = userQueries.findById.get(result.lastInsertRowid) as User;
   return user;
 }
 
-export async function verifyUser(email: string, password: string): Promise<User | null> {
-  const user = userQueries.findByEmail.get(email) as User;
+export async function verifyUser(identifier: string, password: string): Promise<User | null> {
+  // identifier can be email or username
+  let user = userQueries.findByEmail.get(identifier) as User;
+  if (!user) {
+    user = userQueries.findByUsername.get(identifier) as User;
+  }
   if (!user) return null;
   
   const isValid = await bcrypt.compare(password, user.password_hash);

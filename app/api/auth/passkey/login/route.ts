@@ -12,10 +12,14 @@ declare global {
 
 export async function POST(request: NextRequest) {
   try {
-    const { email } = await request.json();
-    if (!email) return NextResponse.json({ error: 'Email required' }, { status: 400 });
+    const { identifier } = await request.json();
+    if (!identifier) return NextResponse.json({ error: 'Identifier (email or username) required' }, { status: 400 });
 
-    const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email) as { id: number } | undefined;
+    // Lookup by email, then by username
+    let user = db.prepare('SELECT id FROM users WHERE email = ?').get(identifier) as { id: number } | undefined;
+    if (!user) {
+      user = db.prepare('SELECT id FROM users WHERE username = ?').get(identifier) as { id: number } | undefined;
+    }
     if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     const passkeys = db.prepare('SELECT credential_id, public_key, counter FROM passkeys WHERE user_id = ?').all(user.id) as { credential_id: string; public_key: string; counter: number }[];
@@ -27,15 +31,16 @@ export async function POST(request: NextRequest) {
       allowCredentials: passkeys.map(p => ({
         id: p.credential_id,
         type: 'public-key' as const,
-        transports: ['internal'] as const,
+        // `transports` should be a mutable array of AuthenticatorTransport strings
+        transports: ['internal'],
       })),
       userVerification: 'preferred',
     });
 
     global.authChallenges = global.authChallenges || new Map();
-    global.authChallenges.set(email, { challenge: options.challenge, userId: user.id });
+    global.authChallenges.set(String(user.id), { challenge: options.challenge, userId: user.id });
 
-    console.log('Generated options:', JSON.stringify(options, null, 2));
+    console.log('Generated passkey authentication options for user id', user.id);
     return NextResponse.json(options);
   } catch (error) {
     console.error(error);
@@ -45,10 +50,17 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const { email, response } = await request.json();
-    if (!email || !response) return NextResponse.json({ error: 'Email and response required' }, { status: 400 });
+    const { identifier, response } = await request.json();
+    if (!identifier || !response) return NextResponse.json({ error: 'Identifier and response required' }, { status: 400 });
 
-    const challengeData = global.authChallenges?.get(email);
+    // Find user by identifier and ensure we have their email for JWT
+    let user = db.prepare('SELECT id, email FROM users WHERE email = ?').get(identifier) as { id: number; email: string } | undefined;
+    if (!user) {
+      user = db.prepare('SELECT id, email FROM users WHERE username = ?').get(identifier) as { id: number; email: string } | undefined;
+    }
+    if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+
+    const challengeData = global.authChallenges?.get(String(user.id));
     if (!challengeData) return NextResponse.json({ error: 'Challenge not found' }, { status: 400 });
 
     // Ensure credential id lookup uses base64url normalization
@@ -108,16 +120,16 @@ export async function PUT(request: NextRequest) {
 
     if (!verification.verified) return NextResponse.json({ error: 'Verification failed' }, { status: 400 });
 
-    // Update counter
-    db.prepare('UPDATE passkeys SET counter = ? WHERE user_id = ? AND credential_id = ?').run(verification.authenticationInfo.newCounter, challengeData.userId, response.id);
+    // Update counter using normalized credential id
+    db.prepare('UPDATE passkeys SET counter = ? WHERE user_id = ? AND credential_id = ?').run(verification.authenticationInfo.newCounter, challengeData.userId, lookupId);
 
-    // Generate JWT
+    // Generate JWT with user's email
     if (!process.env.JWT_SECRET) return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
-    const token = jwt.sign({ userId: challengeData.userId, email }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ userId: challengeData.userId, email: user.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
 
-    global.authChallenges?.delete(email);
+    global.authChallenges?.delete(String(user.id));
 
-    return NextResponse.json({ token, verified: true });
+    return NextResponse.json({ token, verified: true, user: { id: user.id, email: user.email } });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

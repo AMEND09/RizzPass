@@ -12,7 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { startAuthentication } from '@simplewebauthn/browser';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
@@ -31,7 +31,7 @@ export default function LoginPage() {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+  body: JSON.stringify({ identifier, password }),
         credentials: 'same-origin'
       });
 
@@ -41,13 +41,13 @@ export default function LoginPage() {
 
       if (response.ok) {
         // log cookies (the debug cookie is non-httpOnly in dev) so we can see whether the browser saved it
-        try {
+              try {
           // intentionally not reading or logging document.cookie for security
         } catch (e) {
           // ignore
         }
         // derive and store client-side encryption key using the login password and server-provided salt
-        try {
+              try {
           // Use the already-parsed `data` instead of calling response.json() a second time
           const salt = data?.user?.encryption_salt;
           if (salt) {
@@ -58,7 +58,8 @@ export default function LoginPage() {
               exported = await exportKeyToBase64(key);
               // store key material in sessionStorage for this session only
               sessionStorage.setItem('rizzpass_key', exported);
-              sessionStorage.setItem('user_email', email);
+              // store the canonical user email if returned, otherwise fallback to identifier
+              sessionStorage.setItem('user_email', data?.user?.email || identifier);
             } catch (err) {
               console.error('[login] key derivation/export failed', err);
               const msg = err instanceof Error ? err.message : 'Failed to derive encryption key';
@@ -154,12 +155,12 @@ export default function LoginPage() {
       const verificationResp = await fetch('/api/auth/passkey/login', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, response: authResp }),
+        body: JSON.stringify({ identifier, response: authResp }),
       });
       if (verificationResp.ok) {
         const data = await verificationResp.json();
-        // Store the token or something, but since using cookies, perhaps redirect
-        sessionStorage.setItem('user_email', email);
+        // Store the canonical user email returned by server or fallback to identifier
+        sessionStorage.setItem('user_email', data?.user?.email || identifier);
         window.location.href = '/dashboard';
       } else {
         const data = await verificationResp.json();
@@ -202,18 +203,18 @@ export default function LoginPage() {
           <div className="p-6">
             <form onSubmit={handleSubmit} className="space-y-4 font-mono text-gray-100">
               <div>
-                <Label htmlFor="email" className="text-sm text-gray-300">email</Label>
-                <div className="relative mt-1">
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="pl-3 pr-3 h-10"
-                    placeholder="you@example.com"
-                    required
-                  />
-                </div>
+                  <Label htmlFor="identifier" className="text-sm text-gray-300">email or username</Label>
+                    <div className="relative mt-1">
+                      <Input
+                        id="identifier"
+                        type="text"
+                        value={identifier}
+                        onChange={(e) => setIdentifier(e.target.value)}
+                        className="pl-3 pr-3 h-10"
+                        placeholder="you@example.com or username"
+                        required
+                      />
+                    </div>
               </div>
 
               <div>
